@@ -4,60 +4,62 @@ from PIL import Image
 import json
 import io
 import os
-from docx import Document
-from docx.shared import Inches
 
 app = Flask(__name__)
 
-@app.route("/generate_labels", methods=["POST"])
-def generate_labels():
+@app.route("/generate_sheet", methods=["POST"])
+def generate_sheet():
     try:
+        # Read the JSON input
         data_list = request.get_json().get("data", [])
+
+        # Define grid layout and QR size
+        cols, rows = 5, 10
+        qr_size = 200
+        page_width = cols * qr_size
+        page_height = rows * qr_size
+        sheet = Image.new("RGB", (page_width, page_height), "white")
 
         # Load doll logo
         logo = Image.open("doll.png")
         logo_size = 100
         logo.thumbnail((logo_size, logo_size))
 
-        # Create Word doc
-        doc = Document()
-        doc.add_heading("QR Code Labels with Logo", 0)
-
-        for i, entry in enumerate(data_list[:50]):
+        # Generate QR codes and paste into sheet
+        for idx, item in enumerate(data_list[:50]):  # limit to 50
             qr_content = json.dumps({
-                "X1": entry.get("X1", ""),
-                "X2": entry.get("X2", ""),
-                "X3": entry.get("X3", ""),
-                "X4": entry.get("X4", []),
-                "X5": entry.get("X5", "")
+                "X1": item.get("X1", ""),
+                "X2": item.get("X2", ""),
+                "X3": item.get("X3", ""),
+                "X4": item.get("X4", []),
+                "X5": item.get("X5", "")
             }, separators=(',', ':'))
 
             qr = qrcode.QRCode(
+                version=2,
                 error_correction=qrcode.constants.ERROR_CORRECT_H,
-                box_size=10,
-                border=4
+                box_size=2,
+                border=1
             )
             qr.add_data(qr_content)
             qr.make(fit=True)
-            img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+            img_qr = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+            img_qr = img_qr.resize((qr_size, qr_size))
 
-            # Insert logo in center
-            qr_width, qr_height = img.size
-            pos = ((qr_width - logo_size) // 2, (qr_height - logo_size) // 2)
-            img.paste(logo, pos, mask=logo if logo.mode == "RGBA" else None)
+            # Insert doll logo at center
+            pos = ((qr_size - logo_size) // 2, (qr_size - logo_size) // 2)
+            img_qr.paste(logo, pos, mask=logo if logo.mode == 'RGBA' else None)
 
-            # Save temp QR
-            temp_qr = f"qr_{i}.png"
-            img.save(temp_qr)
+            # Position on sheet
+            x = (idx % cols) * qr_size
+            y = (idx // cols) * qr_size
+            sheet.paste(img_qr, (x, y))
 
-            doc.add_paragraph(entry.get("X2", "Label"))
-            doc.add_picture(temp_qr, width=Inches(1.5))
-            os.remove(temp_qr)
-
-        # Return DOCX
-        output = "QR_Code_Labels_with_Logo.docx"
-        doc.save(output)
-        return send_file(output, as_attachment=True)
+        # Return as image
+        img_bytes = io.BytesIO()
+        sheet.save(img_bytes, format="PNG")
+        img_bytes.seek(0)
+        return send_file(img_bytes, mimetype="image/png")
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
